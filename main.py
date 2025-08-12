@@ -125,7 +125,7 @@ def main():
     
     st.sidebar.write("Select OCR engines (enable one at a time if memory is low):")
     use_tesseract = st.sidebar.checkbox("Tesseract (eng+hin)", value=True)
-    use_easyocr = st.sidebar.checkbox("EasyOCR (en+hi)", value=True) 
+    use_easyocr = st.sidebar.checkbox("EasyOCR (en+hi)", value=False) 
     use_paddle = st.sidebar.checkbox("PaddleOCR (en)", value=False)
 
     if not username:
