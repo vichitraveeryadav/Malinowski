@@ -1,7 +1,5 @@
-streamlit>=1.28.0
+streamlit
 pillow
-numpy
 pytesseract
-easyocr
 scikit-learn
 sqlalchemy
