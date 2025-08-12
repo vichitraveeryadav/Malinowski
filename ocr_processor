@@ -1,0 +1,135 @@
+import cv2
+import pytesseract
+import easyocr
+from paddleocr import PaddleOCR
+import numpy as np
+from PIL import Image
+from pathlib import Path
+from config import OCR_LANGUAGES_TESSERACT, OCR_LANGUAGES_EASYOCR
+
+class OCRProcessor:
+    """This class reads text from document images"""
+    
+    def __init__(self, use_tesseract=True, use_easyocr=True, use_paddle=False):
+        # Which OCR engines to use
+        self.use_tesseract = use_tesseract
+        self.use_easyocr = use_easyocr
+        self.use_paddle = use_paddle
+        
+        # Store OCR tools (will be loaded when needed)
+        self._easyocr_reader = None
+        self._paddleocr_reader = None
+
+    def _get_easyocr(self):
+        """Load EasyOCR if not already loaded"""
+        if self._easyocr_reader is None:
+            self._easyocr_reader = easyocr.Reader(OCR_LANGUAGES_EASYOCR)
+        return self._easyocr_reader
+
+    def _get_paddle(self):
+        """Load PaddleOCR if not already loaded"""
+        if self._paddleocr_reader is None:
+            self._paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en')
+        return self._paddleocr_reader
+
+    def preprocess_image(self, image_path):
+        """Clean up the image to make text reading better"""
+        image = cv2.imread(str(image_path))
+        if image is None:
+            return None
+        
+        # Convert to black and white
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Remove noise
+        denoised = cv2.fastNlMeansDenoising(gray)
+        
+        # Make text clearer
+        _, thresh = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        return thresh
+
+    def tesseract_ocr(self, image_path):
+        """Read text using Tesseract OCR"""
+        try:
+            processed_image = self.preprocess_image(image_path)
+            if processed_image is None:
+                return {"text": "", "confidence": 0.0, "error": "Failed to read image"}
+            
+            # Set up Tesseract for English and Hindi
+            lang_string = '+'.join(OCR_LANGUAGES_TESSERACT)  # eng+hin
+            config = r'--oem 3 --psm 6'
+            
+            # Extract text
+            text = pytesseract.image_to_string(processed_image, lang=lang_string, config=config)
+            return {"text": text.strip(), "confidence": 0.8}
+        except Exception as e:
+            return {"text": "", "confidence": 0.0, "error": str(e)}
+
+    def easyocr_extract(self, image_path):
+        """Read text using EasyOCR"""
+        try:
+            reader = self._get_easyocr()
+            result = reader.readtext(str(image_path))
+            
+            # Combine all found text
+            full_text = ""
+            total_confidence = 0.0
+            count = 0
+            
+            for (_, text, conf) in result:
+                full_text += text + " "
+                total_confidence += float(conf)
+                count += 1
+            
+            # Calculate average confidence
+            avg_confidence = (total_confidence / count) if count else 0.0
+            return {"text": full_text.strip(), "confidence": avg_confidence}
+        except Exception as e:
+            return {"text": "", "confidence": 0.0, "error": str(e)}
+
+    def paddleocr_extract(self, image_path):
+        """Read text using PaddleOCR"""
+        try:
+            reader = self._get_paddle()
+            result = reader.ocr(str(image_path), cls=True)
+            
+            # Combine all found text
+            full_text = ""
+            total_confidence = 0.0
+            count = 0
+            
+            for line in result:
+                if line:
+                    for word_info in line:
+                        text = word_info[1]  # The text
+                        confidence = word_info[1][1]  # How sure it is
+                        full_text += text + " "
+                        total_confidence += float(confidence)
+                        count += 1
+            
+            # Calculate average confidence
+            avg_confidence = (total_confidence / count) if count else 0.0
+            return {"text": full_text.strip(), "confidence": avg_confidence}
+        except Exception as e:
+            return {"text": "", "confidence": 0.0, "error": str(e)}
+
+    def process_document(self, image_path):
+        """Use all selected OCR tools and pick the best result"""
+        image_path = Path(image_path)
+        results = {}
+        
+        # Try each OCR tool if enabled
+        if self.use_tesseract:
+            results["tesseract"] = self.tesseract_ocr(image_path)
+        if self.use_easyocr:
+            results["easyocr"] = self.easyocr_extract(image_path)
+        if self.use_paddle:
+            results["paddleocr"] = self.paddleocr_extract(image_path)
+        
+        if not results:
+            return {"text": "", "confidence": 0.0, "all_results": {}}
+        
+        # Pick the result with highest confidence
+        best_result = max(results.values(), key=lambda x: x.get("confidence", 0.0))
+        best_result["all_results"] = results
+        return best_result
